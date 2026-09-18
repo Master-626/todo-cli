@@ -1,0 +1,46 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "todo-cli"
+version = "0.1.0"
+description = "A powerful command-line todo list manager with priorities, tags, and deadlines"
+readme = "README.md"
+requires-python = ">=3.8"
+license = { text = "MIT" }
+authors = [
+    { name = "Xu Jiaqi", email = "jiaqixu12138@gmail.com" }
+]
+keywords = ["todo", "task", "cli", "productivity", "project management"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Intended Audience :: End Users/Desktop",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Topic :: Office/Business :: Scheduling",
+]
+dependencies = [
+    "click>=8.0.0",
+    "rich>=13.0.0",
+    "python-dateutil>=2.8.0",
+]
+
+[project.scripts]
+todo = "todo_cli.cli:main"
+todo-cli = "todo_cli.cli:main"
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/Master-626/todo-cli"
+Repository = "https://github.com/Master-626/todo-cli"
+Issue-Tracker = "https://github.com/Master-626/todo-cli/issues"
