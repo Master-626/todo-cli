@@ -6,13 +6,22 @@ import click
 from rich.console import Console
 from rich.table import Table
 from rich.panel import Panel
+from rich.text import Text
 
-from .models import TaskStore, Priority
+from .models import StorageError, TaskStore
 
 console = Console()
 
 
-@click.group()
+class SafeGroup(click.Group):
+    def invoke(self, ctx):
+        try:
+            return super().invoke(ctx)
+        except (StorageError, ValueError) as exc:
+            raise click.ClickException(str(exc)) from exc
+
+
+@click.group(cls=SafeGroup)
 @click.version_option(version="0.1.0")
 @click.pass_context
 def main(ctx):
@@ -40,15 +49,15 @@ def add(ctx, title, description, priority, tag, due):
         tags=list(tag),
         due_date=due,
     )
-    console.print(f"✅ Added task #{task.id}: [bold green]{title}[/bold green]")
+    console.print(f"✅ Added task #{task.id}: ", Text(task.title, style="bold green"), sep="")
 
 
-@main.command()
+@main.command(name="list")
 @click.option("--all", "show_all", is_flag=True, help="Show all tasks (including completed)")
 @click.option("--priority", "-p", help="Filter by priority")
 @click.option("--tag", "-t", help="Filter by tag")
 @click.pass_context
-def list(ctx, show_all, priority, tag):
+def list_tasks(ctx, show_all, priority, tag):
     """List tasks."""
     store = ctx.obj["store"]
     tasks = store.list_tasks(include_done=show_all, priority=priority, tag=tag)
@@ -81,9 +90,9 @@ def list(ctx, show_all, priority, tag):
             str(task.id),
             status,
             f"[{priority_color}]{task.priority}[/{priority_color}]",
-            task.title,
-            tags_str,
-            due_str,
+            Text(task.title),
+            Text(tags_str),
+            Text(due_str),
         )
 
     console.print(table)
@@ -97,9 +106,9 @@ def done(ctx, task_id):
     store = ctx.obj["store"]
     task = store.complete_task(task_id)
     if task:
-        console.print(f"✅ Completed task #{task_id}: [bold green]{task.title}[/bold green]")
+        console.print(f"✅ Completed task #{task_id}: ", Text(task.title, style="bold green"), sep="")
     else:
-        console.print(f"❌ Task #{task_id} not found", err=True)
+        raise click.ClickException(f"Task #{task_id} not found")
 
 
 @main.command()
@@ -111,7 +120,7 @@ def delete(ctx, task_id):
     if store.delete_task(task_id):
         console.print(f"🗑️  Deleted task #{task_id}")
     else:
-        console.print(f"❌ Task #{task_id} not found", err=True)
+        raise click.ClickException(f"Task #{task_id} not found")
 
 
 @main.command()
