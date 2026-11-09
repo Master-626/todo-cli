@@ -2,6 +2,8 @@
 CLI interface for todo-cli.
 """
 
+import sys
+
 import click
 from rich.console import Console
 from rich.table import Table
@@ -26,6 +28,12 @@ class SafeGroup(click.Group):
 @click.pass_context
 def main(ctx):
     """Todo CLI - Powerful command-line todo list manager."""
+    # Keep the terminal's encoding, but escape characters it cannot represent.
+    # A saved task must not look like a failed operation because of its output.
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is not None:
+            reconfigure(errors="backslashreplace")
     ctx.ensure_object(dict)
     ctx.obj["store"] = TaskStore()
 

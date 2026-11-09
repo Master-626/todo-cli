@@ -73,3 +73,16 @@ def test_user_text_is_literal_and_does_not_fail_after_commit(home):
         assert result.exit_code == 0, result.exception
         assert "[/]" in result.output
     assert TaskStore().get_task(1).title == "[/]"
+
+
+@pytest.mark.parametrize("encoding", ["ascii", "cp1252"])
+def test_legacy_output_encoding_does_not_fail_after_save(home, encoding):
+    env = os.environ.copy()
+    env["PYTHONIOENCODING"] = encoding + ":strict"
+    for args in (["add", "任务"], ["list"], ["done", "1"], ["stats"]):
+        result = subprocess.run([sys.executable, "-m", "todo_cli.cli", *args],
+                                capture_output=True, env=env)
+        assert result.returncode == 0, result.stderr
+        result.stdout.decode(encoding, errors="strict")
+    assert TaskStore().get_task(1).title == "任务"
+    assert TaskStore().get_task(1).done

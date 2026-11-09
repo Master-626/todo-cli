@@ -121,7 +121,9 @@ have different semantics. Keep a backup of important tasks.
 API reads return detached task snapshots. Use `update_task` to persist changes;
 IDs are immutable, unknown update fields are errors, and invalid values are
 rejected. Completing an already completed task preserves its completion timestamp.
-The CLI returns a nonzero status for a missing task or storage failure.
+The CLI returns a nonzero status for a missing task or storage failure. On legacy
+terminal encodings, unsupported output characters are escaped instead of causing
+an error after a successful save. Task files remain UTF-8.
 
 ## 🧪 Testing
 
