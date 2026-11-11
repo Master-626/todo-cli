@@ -2,9 +2,10 @@ import json
 import os
 import subprocess
 import sys
+from datetime import timedelta
 
-from click.testing import CliRunner
 import pytest
+from click.testing import CliRunner
 
 from todo_cli.cli import main
 from todo_cli.models import TaskStore
@@ -86,3 +87,80 @@ def test_legacy_output_encoding_does_not_fail_after_save(home, encoding):
         result.stdout.decode(encoding, errors="strict")
     assert TaskStore().get_task(1).title == "任务"
     assert TaskStore().get_task(1).done
+
+
+def test_add_description_priority_and_due_date(home):
+    result = CliRunner().invoke(
+        main, ["add", "Write", "-d", "details", "-p", "low", "--due", "2026-12-01"]
+    )
+    assert result.exit_code == 0, result.output
+    task = TaskStore().get_task(1)
+    assert task.description == "details"
+    assert task.priority == "low"
+    assert task.due_date == "2026-12-01"
+
+
+def test_empty_tag_filter_is_exact(home):
+    runner = CliRunner()
+    assert runner.invoke(main, ["add", "Blank", "-t", ""]).exit_code == 0
+    assert runner.invoke(main, ["add", "Work", "-t", "work"]).exit_code == 0
+    result = runner.invoke(main, ["list", "-t", ""])
+    assert result.exit_code == 0, result.output
+    assert "Blank" in result.output
+    assert "Work" not in result.output
+
+
+def test_list_rejects_unknown_priority(home):
+    runner = CliRunner()
+    assert runner.invoke(main, ["add", "Keep", "-p", "high"]).exit_code == 0
+    result = runner.invoke(main, ["list", "-p", "HIGH"])
+    text = result.output + (result.stderr or "")
+    assert result.exit_code != 0
+    assert "No tasks found" not in text
+    assert "Keep" not in text
+    listed = runner.invoke(main, ["list", "-p", "high"])
+    assert listed.exit_code == 0, listed.output
+    assert "Keep" in listed.output
+
+
+def test_list_shows_full_task_id(home):
+    path = home / ".todo-cli" / "tasks.json"
+    path.parent.mkdir(parents=True)
+    path.write_text('[{"id": 10000, "title": "Big"}]', encoding="utf-8")
+    result = CliRunner().invoke(main, ["list"])
+    assert result.exit_code == 0, result.output
+    assert "10000" in result.output
+    assert "Big" in result.output
+
+
+def test_overdue_command_filters_pending_past_dates(home, frozen_today):
+    yesterday = (frozen_today - timedelta(days=1)).isoformat()
+    today = frozen_today.isoformat()
+    tomorrow = (frozen_today + timedelta(days=1)).isoformat()
+    runner = CliRunner()
+    for args in (
+        ["add", "Past", "--due", yesterday],
+        ["add", "Today", "--due", today],
+        ["add", "Future", "--due", tomorrow],
+        ["add", "NoDue"],
+        ["add", "OldDone", "--due", "2026-06-01"],
+    ):
+        assert runner.invoke(main, args).exit_code == 0
+    assert runner.invoke(main, ["done", "5"]).exit_code == 0
+
+    overdue = runner.invoke(main, ["list", "--overdue"])
+    assert overdue.exit_code == 0, overdue.output
+    assert "Overdue tasks" in overdue.output
+    assert "Past" in overdue.output
+    for title in ("Today", "Future", "NoDue", "OldDone"):
+        assert title not in overdue.output
+
+    listed = runner.invoke(main, ["list"])
+    assert listed.exit_code == 0, listed.output
+    for title in ("Past", "Today", "Future", "NoDue"):
+        assert title in listed.output
+    assert "OldDone" not in listed.output
+
+    help_result = runner.invoke(main, ["list", "--help"])
+    assert help_result.exit_code == 0
+    assert "--overdue" in help_result.output

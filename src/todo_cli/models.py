@@ -32,16 +32,16 @@ class Task:
     description: str = ""
     done: bool = False
     priority: str = "medium"
-    tags: List[str] = None
+    tags: Optional[List[str]] = None
     due_date: Optional[str] = None
-    created_at: str = None
+    created_at: Optional[str] = None
     completed_at: Optional[str] = None
 
     def __post_init__(self):
+        # Tags omitted on a new task mean "none". Do not invent created_at here:
+        # a missing or JSON-null timestamp must stay null across reads and saves.
         if self.tags is None:
             self.tags = []
-        if self.created_at is None:
-            self.created_at = datetime.now().isoformat()
 
 
 def _validate_tasks(tasks):
@@ -62,6 +62,27 @@ def _validate_tasks(tasks):
             value = getattr(task, key)
             if value is not None and not isinstance(value, str):
                 raise ValueError("Task {} must be text or null".format(key))
+
+
+def _calendar_due(value):
+    """Return a date for a canonical YYYY-MM-DD string, otherwise None."""
+    if not isinstance(value, str):
+        return None
+    try:
+        parsed = datetime.strptime(value, "%Y-%m-%d")
+    except ValueError:
+        return None
+    if parsed.strftime("%Y-%m-%d") != value:
+        return None
+    return parsed.date()
+
+
+def _task_from_raw(raw):
+    # Task.__post_init__ turns tags=None into []. An explicit JSON null is not
+    # the same as an omitted field and must not be rewritten into an empty list.
+    if "tags" in raw and not isinstance(raw["tags"], list):
+        raise ValueError("Task tags must be a list of strings")
+    return Task(**raw)
 
 
 def _check_regular(path):
@@ -103,7 +124,7 @@ def _unique_object(pairs):
 class TaskStore:
     """Manage JSON tasks. All mutations reload under a separate process lock."""
 
-    def __init__(self, file_path: str = None):
+    def __init__(self, file_path: Optional[str] = None):
         path = Path(file_path) if file_path is not None else Path.home() / ".todo-cli" / "tasks.json"
         # Canonicalize directory aliases so cooperating writers share one lock.
         self.file_path = path.parent.resolve() / path.name
@@ -127,7 +148,7 @@ class TaskStore:
                 data = json.load(handle, object_pairs_hook=_unique_object)
             if not isinstance(data, list) or not all(isinstance(t, dict) for t in data):
                 raise ValueError("Expected a JSON array of task objects")
-            tasks = [Task(**t) for t in data]
+            tasks = [_task_from_raw(raw) for raw in data]
             _validate_tasks(tasks)
         except (OSError, UnicodeError, ValueError, TypeError) as exc:
             raise StorageError("Cannot read tasks from {}: {}".format(self.file_path, exc)) from exc
@@ -170,9 +191,11 @@ class TaskStore:
                     acquire()
                     acquired = True
                     break
-                except OSError:
+                except OSError as exc:
                     if time.monotonic() >= deadline:
-                        raise StorageError("Cannot acquire task lock: {}".format(self.lock_path))
+                        raise StorageError(
+                            "Cannot acquire task lock: {}".format(self.lock_path)
+                        ) from exc
                     time.sleep(0.05)
             yield
         except OSError as exc:
@@ -225,15 +248,19 @@ class TaskStore:
                 raise
 
     def add_task(self, title: str, description: str = "", priority: str = "medium",
-                 tags: List[str] = None, due_date: str = None) -> Task:
+                 tags: Optional[List[str]] = None, due_date: Optional[str] = None) -> Task:
         with self._transaction():
             task = Task(id=max((t.id for t in self.tasks), default=0) + 1,
                         title=title, description=description, priority=priority,
-                        tags=copy.deepcopy(tags), due_date=due_date)
+                        tags=copy.deepcopy(tags), due_date=due_date,
+                        created_at=datetime.now().isoformat())
             self.tasks.append(task)
             return copy.deepcopy(task)
 
     def _find(self, task_id):
+        # True == 1 and 1.0 == 1. Only a real int may select a task.
+        if type(task_id) is not int:
+            raise ValueError("Task id must be an integer")
         return next((t for t in self.tasks if t.id == task_id), None)
 
     def get_task(self, task_id: int) -> Optional[Task]:
@@ -241,14 +268,33 @@ class TaskStore:
             self._load()
             return copy.deepcopy(self._find(task_id))
 
-    def list_tasks(self, include_done: bool = True, priority: str = None,
-                   tag: str = None) -> List[Task]:
+    def list_tasks(self, include_done: bool = True, priority: Optional[str] = None,
+                   tag: Optional[str] = None, *, overdue: bool = False) -> List[Task]:
+        """Return detached task snapshots.
+
+        Completed tasks are included unless ``include_done`` is false.
+        ``priority`` and ``tag`` filter only when they are not None, so an
+        empty tag matches an empty tag. ``overdue`` keeps pending tasks whose
+        due date is a canonical ``YYYY-MM-DD`` before today. Any other due
+        string is stored as text and is not overdue.
+        """
         with self._locked():
             self._load()
-            return copy.deepcopy([t for t in self.tasks
-                                  if (include_done or not t.done)
-                                  and (not priority or t.priority == priority)
-                                  and (not tag or tag in t.tags)])
+            today = datetime.now().date() if overdue else None
+            selected = []
+            for task in self.tasks:
+                if task.done and (overdue or not include_done):
+                    continue
+                if priority is not None and task.priority != priority:
+                    continue
+                if tag is not None and tag not in task.tags:
+                    continue
+                if overdue:
+                    due = _calendar_due(task.due_date)
+                    if due is None or due >= today:
+                        continue
+                selected.append(task)
+            return copy.deepcopy(selected)
 
     def complete_task(self, task_id: int) -> Optional[Task]:
         with self._transaction():

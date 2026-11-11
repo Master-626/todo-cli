@@ -6,11 +6,14 @@ import sys
 
 import click
 from rich.console import Console
-from rich.table import Table
 from rich.panel import Panel
+from rich.table import Table
 from rich.text import Text
 
-from .models import StorageError, TaskStore
+from . import __version__
+from .models import Priority, StorageError, TaskStore
+
+PRIORITIES = click.Choice([item.value for item in Priority])
 
 console = Console()
 
@@ -24,7 +27,7 @@ class SafeGroup(click.Group):
 
 
 @click.group(cls=SafeGroup)
-@click.version_option(version="0.1.0")
+@click.version_option(version=__version__)
 @click.pass_context
 def main(ctx):
     """Todo CLI - Powerful command-line todo list manager."""
@@ -41,11 +44,10 @@ def main(ctx):
 @main.command()
 @click.argument("title")
 @click.option("--description", "-d", default="", help="Task description")
-@click.option("--priority", "-p", default="medium",
-              type=click.Choice(["low", "medium", "high", "urgent"]),
+@click.option("--priority", "-p", default="medium", type=PRIORITIES,
               help="Task priority")
 @click.option("--tag", "-t", multiple=True, help="Task tags (can be used multiple times)")
-@click.option("--due", help="Due date (YYYY-MM-DD)")
+@click.option("--due", help="Due date. A YYYY-MM-DD value is overdue before today")
 @click.pass_context
 def add(ctx, title, description, priority, tag, due):
     """Add a new task."""
@@ -62,20 +64,22 @@ def add(ctx, title, description, priority, tag, due):
 
 @main.command(name="list")
 @click.option("--all", "show_all", is_flag=True, help="Show all tasks (including completed)")
-@click.option("--priority", "-p", help="Filter by priority")
+@click.option("--priority", "-p", type=PRIORITIES, help="Filter by priority")
 @click.option("--tag", "-t", help="Filter by tag")
+@click.option("--overdue", is_flag=True,
+              help="Only incomplete tasks whose due date is YYYY-MM-DD before today")
 @click.pass_context
-def list_tasks(ctx, show_all, priority, tag):
+def list_tasks(ctx, show_all, priority, tag, overdue):
     """List tasks."""
     store = ctx.obj["store"]
-    tasks = store.list_tasks(include_done=show_all, priority=priority, tag=tag)
+    tasks = store.list_tasks(include_done=show_all, priority=priority, tag=tag, overdue=overdue)
 
     if not tasks:
         console.print("📭 No tasks found")
         return
 
-    table = Table(title="Todo List")
-    table.add_column("ID", style="cyan", width=4)
+    table = Table(title="Overdue tasks" if overdue else "Todo List")
+    table.add_column("ID", style="cyan", min_width=4)
     table.add_column("Status", width=6)
     table.add_column("Priority", width=8)
     table.add_column("Title", style="green")
