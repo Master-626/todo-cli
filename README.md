@@ -1,24 +1,30 @@
 # Todo CLI
 
+## 概要
+
+`todo-cli` 是一个本地命令行待办工具，用来添加、列出、完成和删除任务，并查看统计。每条任务可以带优先级、标签和截止日期，数据以 JSON 保存在 `~/.todo-cli/tasks.json`。多个进程通过文件锁和原子替换安全地更新同一份清单。下文为英文说明。
+
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python Version](https://img.shields.io/badge/python-3.8%2B-blue.svg)](https://www.python.org/)
 [![Productivity Tool](https://img.shields.io/badge/productivity-tool-green.svg)]()
 
-A powerful command-line todo list manager with priorities, tags, and deadlines.
+A local command-line todo list. Tasks have a priority, tags, and an optional due date, and they are stored in a JSON file that cooperating processes can update safely.
 
-## 🌟 Features
+The `todo` and `todo-cli` commands are the same program. `TaskStore` is the library API.
 
-- ➕ **Add Tasks** - Quick task creation with title, description, priority
-- 🏷️ **Tags** - Organize tasks with custom tags
-- 📅 **Due Dates** - Set deadlines for your tasks
-- 🎯 **Priorities** - Low, medium, high, urgent priority levels
-- ✅ **Complete** - Mark tasks as done
-- 📊 **Statistics** - View your productivity stats
-- 🎨 **Rich Output** - Beautiful terminal UI with colors and tables
-- 💾 **Persistent** - Tasks are saved locally in JSON format
-- 🐍 **Python API** - Use as a library in your code
+## Features
 
-## 📦 Installation
+- Add a task with a title, description, priority, tags, and due date
+- List pending tasks, or include completed ones
+- Filter by priority or tag, and list tasks that are overdue
+- Mark a task done, or delete it
+- Show counts by status and pending priority
+- Save tasks as JSON under `~/.todo-cli/tasks.json`
+- Use the same operations from Python
+
+## Installation
+
+Python 3.8 or newer is required.
 
 ```bash
 git clone https://github.com/Master-626/todo-cli.git
@@ -26,112 +32,114 @@ cd todo-cli
 pip install .
 ```
 
-## 🚀 Usage
+Install the development extra to run the tests and the linter:
 
-### Add a Task
 ```bash
-# Basic
+pip install -e ".[dev]"
+```
+
+## Usage
+
+```bash
+# Title only. Priority defaults to medium.
 todo add "Buy groceries"
 
-# With priority and tags
-todo add "Finish project proposal" -p high -t work -t urgent --due 2026-09-30
-```
+# Description, priority, tags, and a calendar due date.
+todo add "Finish project proposal" -d "First draft" -p high -t work -t urgent --due 2026-09-30
 
-### List Tasks
-```bash
-# List pending tasks (default)
+# Pending tasks.
 todo list
 
-# Show all tasks including completed
+# Completed tasks too, or only one priority / tag.
 todo list --all
-
-# Filter by priority
 todo list -p high
-
-# Filter by tag
 todo list -t work
-```
 
-### Complete a Task
-```bash
+# Pending tasks whose YYYY-MM-DD due date is before today.
+todo list --overdue
+
 todo done 1
-```
-
-### Delete a Task
-```bash
 todo delete 2
-```
-
-### View Statistics
-```bash
 todo stats
 ```
 
-## 🐍 Python API
+`todo list --overdue -p high -t work` combines the filters. A task due today is not overdue. Text that is not a canonical `YYYY-MM-DD` date is stored unchanged and is not treated as overdue. Completed tasks are never overdue.
+
+## Commands and options
+
+| Command | Option | Meaning |
+| --- | --- | --- |
+| `todo add TITLE` | `-d, --description TEXT` | Optional description. Default: empty. |
+| | `-p, --priority CHOICE` | `low`, `medium`, `high`, or `urgent`. Default: `medium`. |
+| | `-t, --tag TEXT` | Tag. Repeat for more than one. An empty tag is stored as an empty tag. |
+| | `--due TEXT` | Due text. `YYYY-MM-DD` is the form `--overdue` understands. |
+| `todo list` | `--all` | Include completed tasks. The default list is pending only. |
+| | `-p, --priority CHOICE` | Exact priority. Unknown values are an error. |
+| | `-t, --tag TEXT` | Exact tag. An empty value matches only empty tags. |
+| | `--overdue` | Pending tasks with a `YYYY-MM-DD` due date before today. |
+| `todo done ID` | | Mark task `ID` done. A missing id exits nonzero. Doing it again keeps the original completion time. |
+| `todo delete ID` | | Delete task `ID`. A missing id exits nonzero. |
+| `todo stats` | | Total, completed, pending, and pending counts by priority. |
+| `todo --version` | | Print the version and exit. |
+
+Ids shown in `todo list` are the full integers to pass to `done` and `delete`.
+
+The library list includes completed tasks unless you pass `include_done=False`. The CLI hides them unless you pass `--all`.
+
+## Python API
 
 ```python
 from todo_cli.models import TaskStore
 
-store = TaskStore()
+store = TaskStore()  # or TaskStore("/path/to/tasks.json")
 
-# Add tasks
-task = store.add_task("Write documentation", priority="high", tags=["docs"])
+task = store.add_task(
+    "Write documentation",
+    description="API examples",
+    priority="high",
+    tags=["docs"],
+    due_date="2026-09-30",
+)
 
-# List tasks
-tasks = store.list_tasks(priority="high")
-
-# Complete task
+pending = store.list_tasks(include_done=False, priority="high", tag="docs")
+overdue = store.list_tasks(overdue=True)
 store.complete_task(task.id)
-
-# Get stats
+store.delete_task(task.id)
 stats = store.get_stats()
-print(f"Pending: {stats['pending']}")
+print(stats["pending"], stats["by_priority"]["high"])
 ```
+
+`list_tasks` treats `priority=None` and `tag=None` as "no filter". Any other value is matched exactly, including an empty tag. `get_task`, `complete_task`, `delete_task`, and `update_task` require a real `int` id. `True` and `1.0` are rejected instead of selecting task 1.
+
+Reads return detached snapshots. Persist edits with `update_task`. Ids cannot be changed, unknown fields are errors, and invalid values are rejected. A task added through `add_task` stores `created_at` as a local timestamp. A missing or JSON `null` `created_at` stays null.
 
 ## Storage safety
 
-The existing JSON array format and default `~/.todo-cli/tasks.json` location are
-preserved. A custom API path may be passed to `TaskStore(file_path=...)`.
+The JSON array format and the default `~/.todo-cli/tasks.json` location are unchanged. Pass another path to `TaskStore(file_path=...)`.
 
-- Each read and mutation takes a process lock. Mutations reload the latest file
-  before changing it, so independent CLI processes and stale `TaskStore` instances
-  do not overwrite each other's tasks.
-- Saves use a temporary file in the same directory, flush and `fsync` it, then
-  atomically replace the JSON file. An ordinary write failure leaves the prior
-  file intact. In-memory changes are rolled back when a save fails.
-- Invalid JSON, invalid field types, duplicate IDs, and unknown fields are errors,
-  never an empty task list. Back up and repair a damaged file before retrying.
-- Data and lock files must be regular files with a single hard link. Symbolic
-  links (including dangling links), hard-linked files, directories, and special
-  files are rejected. Parent directory aliases resolve to one canonical lock path.
-- The persistent `tasks.json.lock` sidecar is intentional. Do not delete or replace
-  it while any process is using the store. Lock acquisition times out after ten
-  seconds with an error. Readers also require permission to create/use this file.
-- New task files and replacement files are owner-only on POSIX. An abruptly killed
-  writer may leave a hidden `.tasks-*.tmp` file, but the original task file remains
-  readable and the OS releases its lock. A kill after replacement may have already
-  committed the operation; inspect the list before retrying an uncertain add.
+- Each read and mutation takes a process lock. Mutations reload the latest file before changing it, so independent CLI processes and stale `TaskStore` instances do not overwrite each other's tasks.
+- Saves use a temporary file in the same directory, flush and `fsync` it, then atomically replace the JSON file. An ordinary write failure leaves the prior file intact. In-memory changes are rolled back when a save fails.
+- Invalid JSON, invalid field types, duplicate IDs, and unknown fields are errors, never an empty task list. Back up and repair a damaged file before retrying.
+- An omitted `tags` field means no tags. JSON `null` for `tags` is invalid and is not coerced to `[]`.
+- A missing or null `created_at` is not replaced with the current time on read or on a later save.
+- Data and lock files must be regular files with a single hard link. Symbolic links (including dangling links), hard-linked files, directories, and special files are rejected. Parent directory aliases resolve to one canonical lock path.
+- The persistent `tasks.json.lock` sidecar is intentional. Do not delete or replace it while any process is using the store. Lock acquisition times out after ten seconds with an error. Readers also require permission to create or use this file.
+- New task files and replacement files are owner-only on POSIX. An abruptly killed writer may leave a hidden `.tasks-*.tmp` file, but the original task file remains readable and the OS releases its lock. A kill after replacement may have already committed the operation; inspect the list before retrying an uncertain add.
 
-These guarantees apply to cooperating processes on a local filesystem with working
-file locks and atomic replacement. They are not a power-loss durability guarantee
-or protection against another program modifying the data, lock, or directory.
-Windows uses byte-range locking and POSIX uses `flock`; network filesystems may
-have different semantics. Keep a backup of important tasks.
+These guarantees apply to cooperating processes on a local filesystem with working file locks and atomic replacement. They are not a power-loss durability guarantee or protection against another program modifying the data, lock, or directory. Windows uses byte-range locking and POSIX uses `flock`; network filesystems may have different semantics. Keep a backup of important tasks.
 
-API reads return detached task snapshots. Use `update_task` to persist changes;
-IDs are immutable, unknown update fields are errors, and invalid values are
-rejected. Completing an already completed task preserves its completion timestamp.
-The CLI returns a nonzero status for a missing task or storage failure. On legacy
-terminal encodings, unsupported output characters are escaped instead of causing
-an error after a successful save. Task files remain UTF-8.
+On legacy terminal encodings, unsupported output characters are escaped instead of causing an error after a successful save. Task files remain UTF-8. The CLI returns a nonzero status for a missing task, an unknown list priority, or a storage failure.
 
-## 🧪 Testing
+## Testing
 
 ```bash
 pip install -e ".[dev]"
 pytest
+ruff check .
 ```
 
-## 📄 License
+GitHub Actions runs `ruff check` and `pytest` on Python 3.8 through 3.13, on Ubuntu and Windows.
+
+## License
 
 MIT License

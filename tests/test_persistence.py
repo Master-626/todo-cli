@@ -2,10 +2,10 @@
 
 import json
 import os
-from pathlib import Path
 import subprocess
 import sys
 import time
+from pathlib import Path
 
 import pytest
 
@@ -72,7 +72,7 @@ def test_corrupt_existing_data_is_never_overwritten(tmp_path, raw):
 
 @pytest.mark.parametrize("changes", [
     {"title": " "}, {"title": None}, {"description": 4}, {"priority": []},
-    {"priority": "unknown"}, {"tags": "text"}, {"tags": [1]},
+    {"priority": "unknown"}, {"tags": "text"}, {"tags": [1]}, {"tags": None},
     {"done": 1}, {"due_date": 42}, {"id": 999}, {"__dict__": {}}, {"unknown": 1},
 ])
 def test_invalid_update_preserves_file_and_cache(store, changes):
@@ -116,7 +116,13 @@ def test_legacy_optional_fields_and_unicode(tmp_path):
     path.write_text('[{"id":1,"title":"旧任务"}]', encoding="utf-8")
     store = TaskStore(str(path))
     assert store.get_task(1).tags == []
+    assert store.get_task(1).created_at is None
+    assert path.read_text(encoding="utf-8") == '[{"id":1,"title":"旧任务"}]'
     store.add_task("新任务", tags=["工作"])
+    saved = json.loads(path.read_text(encoding="utf-8"))
+    assert saved[0]["created_at"] is None
+    assert saved[1]["title"] == "新任务"
+    assert saved[1]["created_at"]
     assert TaskStore(str(path)).get_task(2).title == "新任务"
 
 
@@ -264,6 +270,41 @@ def test_invalid_update_cannot_hide_behind_value_equality(store):
         store.update_task(task.id, done=1)
     assert type(store.tasks[0].done) is bool
     assert store.file_path.read_bytes() == before
+
+
+def test_null_created_at_stays_null_across_reads_and_saves(tmp_path):
+    path = tmp_path / "tasks.json"
+    path.write_text(json.dumps([{"id": 1, "title": "a", "created_at": None}]), encoding="utf-8")
+    store = TaskStore(str(path))
+    assert store.get_task(1).created_at is None
+    assert store.get_task(1).created_at is None
+    before = path.read_bytes()
+    assert store.get_task(1).created_at is None
+    assert path.read_bytes() == before
+    store.update_task(1, description="note")
+    saved = json.loads(path.read_text(encoding="utf-8"))
+    assert saved[0]["created_at"] is None
+    assert saved[0]["description"] == "note"
+    assert saved[0]["title"] == "a"
+
+
+def test_explicit_created_at_is_preserved(tmp_path):
+    path = tmp_path / "tasks.json"
+    stamp = "2020-01-01T00:00:00"
+    path.write_text(json.dumps([{"id": 1, "title": "a", "created_at": stamp}]), encoding="utf-8")
+    store = TaskStore(str(path))
+    assert store.get_task(1).created_at == stamp
+    store.complete_task(1)
+    assert json.loads(path.read_text(encoding="utf-8"))[0]["created_at"] == stamp
+
+
+def test_null_tags_are_rejected_without_rewrite(tmp_path):
+    path = tmp_path / "tasks.json"
+    raw = b'[{"id": 1, "title": "keep", "tags": null}]'
+    path.write_bytes(raw)
+    with pytest.raises(StorageError, match="tags"):
+        TaskStore(str(path))
+    assert path.read_bytes() == raw
 
 
 def test_duplicate_json_fields_are_not_silently_discarded(tmp_path):
