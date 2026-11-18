@@ -110,11 +110,43 @@ def test_empty_tag_filter_is_exact(home):
     assert "Work" not in result.output
 
 
+def _command_text(result):
+    """Stdout plus stderr when this Click version captured stderr separately.
+
+    Click before 8.2 mixes stderr into ``output`` and raises ValueError from
+    ``result.stderr`` unless ``mix_stderr=False``. Later Click always captures
+    stderr separately. Reading ``output`` alone is enough for the failure
+    text on the old runner; appending stderr covers the new one.
+    """
+    text = result.output
+    try:
+        extra = result.stderr
+    except ValueError:
+        extra = ""
+    return text + (extra or "")
+
+
+def test_command_text_reads_both_click_capture_styles():
+    class Mixed:
+        output = "Error: Invalid value"
+
+        @property
+        def stderr(self):
+            raise ValueError("stderr not separately captured")
+
+    class Separate:
+        output = ""
+        stderr = "Error: Invalid value"
+
+    assert _command_text(Mixed()) == "Error: Invalid value"
+    assert _command_text(Separate()) == "Error: Invalid value"
+
+
 def test_list_rejects_unknown_priority(home):
     runner = CliRunner()
     assert runner.invoke(main, ["add", "Keep", "-p", "high"]).exit_code == 0
     result = runner.invoke(main, ["list", "-p", "HIGH"])
-    text = result.output + (result.stderr or "")
+    text = _command_text(result)
     assert result.exit_code != 0
     assert "No tasks found" not in text
     assert "Keep" not in text
